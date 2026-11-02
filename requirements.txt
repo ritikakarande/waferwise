@@ -1,0 +1,28 @@
+# Core
+numpy>=2.0,<3
+pandas>=2.2,<4
+scikit-learn>=1.5,<2
+pyyaml>=6.0,<7
+tqdm>=4.66,<5
+six>=1.16,<2  # the kaggle CLI imports it but does not declare it
+
+# Deep learning
+torch>=2.4,<3
+torchvision>=0.19,<1
+
+# Label audit
+cleanlab>=2.6,<3
+
+# Plots
+matplotlib>=3.8,<4
+seaborn>=0.13,<1
+
+# Deployment (ONNX -> OpenVINO, INT8 with NNCF, image I/O)
+onnx>=1.16,<2
+openvino>=2024.4,<2027
+nncf>=2.13,<4
+opencv-python>=4.10,<6
+
+# Data download and tests
+kaggle>=1.6,<3
+pytest>=8.0,<10

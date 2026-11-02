@@ -1,0 +1,10 @@
+# Data preparation settings. Paths are relative to the repo root.
+kaggle_dataset: qingyi/wm811k-wafer-map
+raw_path: data/raw/LSWMD.pkl
+processed_path: data/processed/wm811k_64.npz
+splits_path: splits/splits_seed42.npz
+
+image_size: 64        # wafer maps are resized to image_size x image_size (nearest neighbour)
+seed: 42
+val_fraction: 0.15
+test_fraction: 0.15   # the remaining 70% is the training set
