@@ -218,3 +218,47 @@ __marimo__/
 
 # Streamlit
 .streamlit/secrets.toml
+
+# ---------------------------------------------------------------------------
+# waferwise project rules
+# ---------------------------------------------------------------------------
+
+# Local-only working notes (never commit)
+CLAUDE.md
+PROGRESS.md
+PLAN.md
+.claude/
+
+# Virtual environment
+.venv/
+
+# Data and outputs
+data/
+outputs/
+runs/
+mlruns/
+wandb/
+
+# Credentials
+kaggle.json
+.env
+
+# Model weights and exports
+*.pt
+*.pth
+*.onnx
+*.xml
+*.bin
+checkpoints/
+
+# C++ build folders
+build/
+cmake-build-*/
+
+# Python / Jupyter / OS / editor clutter
+__pycache__/
+.ipynb_checkpoints/
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
