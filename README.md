@@ -55,6 +55,37 @@ version. That reader only allows NumPy and a few safe built-ins to be loaded fro
 - WM-811K contains 3,250 groups of pixel-identical wafer maps. A plain random split put 704 test wafers' exact copies
   in the training set, so the split keeps every duplicate group inside a single split.
 
+## Training and evaluation
+
+```bash
+python scripts/train.py --config configs/baseline.yaml           # -> outputs/baseline/
+python scripts/evaluate.py --run outputs/baseline --split test   # final numbers only, never for tuning
+```
+
+Each run writes `model.pt`, `history.json`, `training_curves.png`, `metrics_val.json` and a row-normalised
+confusion matrix (`confusion_val.png`) to `outputs/<experiment_name>/`. Models are selected by validation macro-F1.
+Every report includes macro-F1 and per-class recall, because plain accuracy is misleading here: predicting "none" for
+every wafer already scores 85%.
+
+**Baseline:** a 4-block CNN (~99k parameters) on 1x64x64 maps, AdamW, cosine learning rate, random flips and
+90-degree rotations, and cross-entropy weighted by 1/sqrt(class frequency).
+
+## Results so far
+
+| Model | Train data | Val macro-F1 | Test macro-F1 | Test macro recall | Test accuracy |
+|---|---|---|---|---|---|
+| Baseline CNN (FP32, PyTorch) | real, uncleaned | 0.873 | 0.871 | 0.893 | 0.972 |
+
+Per-class test recall for the baseline:
+
+| Center | Donut | Edge-Loc | Edge-Ring | Loc | Near-full | Random | Scratch | none |
+|---|---|---|---|---|---|---|---|---|
+| 0.93 | 0.89 | 0.85 | 0.97 | 0.74 | 0.95 | 0.95 | 0.77 | 0.99 |
+
+The weakest classes are Loc and Scratch. 13% of each is predicted as "none", and in the other direction "none" wafers
+are most often confused with Edge-Loc, Loc, Center and Scratch. Small local defects and clean wafers are the hardest
+boundary, and that is where the label audit looks next.
+
 ## Repository layout
 
 ```
