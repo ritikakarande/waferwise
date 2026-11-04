@@ -132,6 +132,46 @@ caveats: the gain is within noise for every class, and val/test contain the same
 deliberately left untouched), so a model that has stopped learning "defect-looking wafer = none" is partly penalised
 by those noisy labels. The cleaned training set is carried forward to the synthetic-data experiments.
 
+## Synthetic rare defects
+
+The four rarest classes have only 107 (Near-full), 384 (Donut), 598 (Random) and 791 (Scratch) cleaned training
+wafers. A small **conditional VAE** (1.8M parameters, 12 minutes on a laptop CPU) learns where failing dies appear for
+each class and generates new ones:
+
+- It models only the *fail map* (which dies failed), conditioned on the class. Training uses balanced epochs (every
+  class seen equally often) and random rotations/flips, on the cleaned training split only.
+- Each synthetic wafer borrows its outline and die grid from a random real wafer of the same class. Dies pass or fail
+  **one die at a time**, using the model's average failure probability over that die. Sampling every pixel
+  independently gave fine salt-and-pepper noise that looked nothing like real maps (most wafers have only ~25x27 dies
+  scaled up to 64x64); sampling per die reproduces their blocky look.
+
+```bash
+python scripts/train_vae.py            # -> outputs/cvae/model.pt
+python scripts/generate_synthetic.py   # -> data/synthetic/cvae.npz (2,000 per rare class)
+python scripts/realism_check.py        # -> outputs/realism/summary.json
+```
+
+![Real vs synthetic wafers](docs/figures/cvae_real_vs_synthetic.png)
+
+**Realism check** (all on training data; val and test are not used):
+
+| Class | Real-vs-synthetic detector AUC (CNN / trees) | Baseline classifier picks the intended class | Copies of training wafers |
+|---|---|---|---|
+| Near-full | 0.83 / 0.92 | 79% | none |
+| Random | 0.84 / 0.87 | 85% | none |
+| Donut | 0.89 / 0.95 | 53% (else mostly Loc) | none |
+| Scratch | 0.89 / 0.85 | **2%** (almost all "none") | none |
+
+The detector AUCs (0.5 would mean indistinguishable) show the synthetic wafers are still recognisably synthetic,
+which is typical for a VAE: it averages over possibilities and produces softer patterns than real wafers. Copying is
+ruled out: no synthetic wafer is closer to a training wafer than the closest 5% of real-to-real pairs. Blob- and
+texture-like defects (Near-full, Random, partly Donut) come out recognisable. Thin scratches do not: the VAE blurs a
+one-die-wide line into background noise. Sharpening the probabilities or lowering the sampling temperature helped
+Near-full and Donut a little but hurt Random, and did not rescue Scratch, so the plain settings are kept.
+
+Whether these samples actually improve rare-class recall is tested next, against simple oversampling of the real
+rare wafers.
+
 ## Repository layout
 
 ```
@@ -142,6 +182,7 @@ src/waferwise/
   train.py    training loop
   evaluate.py macro-F1, per-class recall, confusion matrix
   label_audit.py  cross-validation folds, cleanlab + ensemble disagreement
+  generative.py   conditional VAE and die-level sampling of synthetic wafers
   utils.py    seeding, logging, paths
 scripts/      command-line entry points
 splits/       the fixed train/val/test split
