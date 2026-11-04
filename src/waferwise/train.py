@@ -8,6 +8,7 @@ import matplotlib
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 import numpy as np
+import pandas as pd
 import torch
 from torch import nn
 from torch.utils.data import DataLoader
@@ -76,7 +77,7 @@ def train_one_epoch(model, loader, criterion, optimizer, device) -> float:
     model.train()
     total, n = 0.0, 0
     for x, y in loader:
-        x, y = x.to(device), y.to(device)
+        x, y = x.to(device, memory_format=torch.channels_last), y.to(device)
         optimizer.zero_grad()
         loss = criterion(model(x), y)
         loss.backward()
@@ -104,10 +105,21 @@ def plot_history(history: list[dict], path: Path) -> None:
     plt.close(fig)
 
 
-def train(cfg: dict, out_dir: str | Path, limit: int | None = None) -> dict:
+def drop_listed_wafers(train_idx: np.ndarray, source_index: np.ndarray, drop_csv: str | Path) -> np.ndarray:
+    """Remove training wafers marked ``drop == 1`` in a label-audit CSV (matched by LSWMD row number)."""
+    audit = pd.read_csv(repo_path(drop_csv))
+    drop_ids = audit.loc[audit["drop"] == 1, "source_index"].to_numpy()
+    keep = ~np.isin(source_index[train_idx], drop_ids)
+    log.info("Dropping %d training wafers listed in %s", (~keep).sum(), drop_csv)
+    return train_idx[keep]
+
+
+def train(cfg: dict, out_dir: str | Path, limit: int | None = None, train_indices: np.ndarray | None = None) -> dict:
     """Train a model from a config dict; saves checkpoint, history and val report into ``out_dir``.
 
-    ``limit`` caps the number of training samples (for quick smoke tests).
+    ``limit`` caps the number of training samples (for quick smoke tests). ``train_indices``
+    replaces the official training split (used for cross-validation folds). If the config sets
+    ``train.drop_list``, wafers flagged in that label-audit CSV are removed from training.
     """
     out_dir = repo_path(out_dir)
     out_dir.mkdir(parents=True, exist_ok=True)
@@ -116,14 +128,17 @@ def train(cfg: dict, out_dir: str | Path, limit: int | None = None) -> dict:
     device = get_device()
 
     data, splits, classes = load_data(cfg["data_config"])
-    train_idx = splits["train"]
+    train_idx = splits["train"] if train_indices is None else train_indices
+    if tcfg.get("drop_list"):
+        train_idx = drop_listed_wafers(train_idx, data["source_index"], tcfg["drop_list"])
     if limit is not None:
         train_idx = np.random.default_rng(cfg["seed"]).choice(train_idx, size=min(limit, len(train_idx)), replace=False)
 
     train_loader = make_loader(data, train_idx, tcfg["batch_size"], True, tcfg, cfg["seed"])
     val_loader = make_loader(data, splits["val"], 1024, False, tcfg, cfg["seed"])
 
-    model = build_model(cfg["model"], len(classes)).to(device)
+    # channels_last memory layout makes these convolutions ~2x faster on CPU.
+    model = build_model(cfg["model"], len(classes)).to(device, memory_format=torch.channels_last)
     weights = class_weights(data["y"][train_idx], len(classes), tcfg["class_weighting"])
     criterion = nn.CrossEntropyLoss(weight=weights.to(device))
     optimizer = torch.optim.AdamW(model.parameters(), lr=tcfg["lr"], weight_decay=tcfg["weight_decay"])
@@ -176,7 +191,7 @@ def train(cfg: dict, out_dir: str | Path, limit: int | None = None) -> dict:
 def load_checkpoint(path: str | Path, device: str | torch.device = "cpu") -> tuple[nn.Module, dict, list[str]]:
     checkpoint = torch.load(repo_path(path), map_location=device, weights_only=True)
     cfg, classes = checkpoint["config"], checkpoint["classes"]
-    model = build_model(cfg["model"], len(classes)).to(device)
+    model = build_model(cfg["model"], len(classes)).to(device, memory_format=torch.channels_last)
     model.load_state_dict(checkpoint["model_state"])
     model.eval()
     return model, cfg, classes

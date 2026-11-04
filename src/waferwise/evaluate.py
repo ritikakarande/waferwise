@@ -23,7 +23,7 @@ def predict(model: torch.nn.Module, loader, device: str | torch.device = "cpu") 
     model.eval()
     probs, labels = [], []
     for x, y in loader:
-        logits = model(x.to(device))
+        logits = model(x.to(device, memory_format=torch.channels_last))
         probs.append(torch.softmax(logits, dim=1).cpu().numpy())
         labels.append(np.asarray(y))
     return np.concatenate(probs), np.concatenate(labels)
