@@ -1,0 +1,19 @@
+# Baseline CNN trained on the training split with audited suspect labels removed.
+experiment_name: cleaned
+data_config: configs/data.yaml
+seed: 42
+
+model:
+  channels: [16, 32, 64, 128]
+  dropout: 0.3
+
+train:
+  epochs: 30
+  batch_size: 256
+  lr: 0.001
+  weight_decay: 0.0001
+  class_weighting: inverse_sqrt   # none | inverse | inverse_sqrt
+  augment: true                   # random flips and 90-degree rotations
+  early_stopping_patience: 6      # epochs without val macro-F1 improvement
+  num_workers: 0
+  drop_list: audit/suspect_labels.csv   # wafers with drop=1 are removed from training

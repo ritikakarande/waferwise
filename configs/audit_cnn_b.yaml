@@ -1,0 +1,20 @@
+# Cross-validation member B for the label audit: a smaller CNN with a different seed,
+# so its mistakes are less correlated with member A's.
+experiment_name: audit_cnn_b
+data_config: configs/data.yaml
+audit_config: configs/label_audit.yaml
+seed: 7
+
+model:
+  channels: [8, 16, 32, 64]
+  dropout: 0.2
+
+train:
+  epochs: 15
+  batch_size: 256
+  lr: 0.002
+  weight_decay: 0.0001
+  class_weighting: inverse_sqrt
+  augment: true
+  early_stopping_patience: 6
+  num_workers: 0

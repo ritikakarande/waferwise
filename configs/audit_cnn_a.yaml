@@ -1,0 +1,19 @@
+# Cross-validation member A for the label audit: the baseline architecture, shorter schedule.
+experiment_name: audit_cnn_a
+data_config: configs/data.yaml
+audit_config: configs/label_audit.yaml
+seed: 42
+
+model:
+  channels: [16, 32, 64, 128]
+  dropout: 0.3
+
+train:
+  epochs: 15
+  batch_size: 256
+  lr: 0.001
+  weight_decay: 0.0001
+  class_weighting: inverse_sqrt
+  augment: true
+  early_stopping_patience: 6
+  num_workers: 0
