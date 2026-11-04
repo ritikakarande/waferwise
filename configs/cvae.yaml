@@ -1,0 +1,26 @@
+# Conditional VAE for synthetic rare-defect wafer maps.
+# Trained on the cleaned TRAIN split only; val and test are never used.
+experiment_name: cvae
+data_config: configs/data.yaml
+drop_list: audit/suspect_labels.csv   # train on the audited labels
+seed: 42
+
+model:
+  latent_dim: 32
+  channels: [32, 64, 128, 256]
+
+train:
+  epochs: 40
+  samples_per_class: 2000   # balanced epochs: every class is seen equally often
+  batch_size: 128
+  lr: 0.001
+  beta: 1.0                 # weight of the KL term
+  kl_warmup_epochs: 10      # ramp beta up from 0 to avoid posterior collapse early on
+  augment: true
+
+generate:
+  classes: [Near-full, Donut, Random, Scratch]   # the four rarest classes
+  per_class: 2000
+  temperature: 1.0          # latent noise scale; a sweep (0.6-1.0) changed little overall
+  sharpen: 1.0              # >1 sharpens probabilities: helps Near-full/Donut, hurts Random, Scratch unchanged
+  output: data/synthetic/cvae.npz

@@ -162,6 +162,11 @@ def flatten_label(raw) -> str | None:
     return str(arr.ravel()[0]).strip()
 
 
+def nearest_index(n_in: int, n_out: int) -> np.ndarray:
+    """For each of ``n_out`` output pixels, the input index whose centre it falls on."""
+    return ((np.arange(n_out) + 0.5) * n_in / n_out).astype(int)
+
+
 def resize_nearest(wafer: np.ndarray, size: int) -> np.ndarray:
     """Resize a categorical wafer map with nearest-neighbour sampling.
 
@@ -169,9 +174,7 @@ def resize_nearest(wafer: np.ndarray, size: int) -> np.ndarray:
     ever contains values that were in the input (no blending of 0/1/2 codes).
     """
     h, w = wafer.shape
-    rows = ((np.arange(size) + 0.5) * h / size).astype(int)
-    cols = ((np.arange(size) + 0.5) * w / size).astype(int)
-    return wafer[np.ix_(rows, cols)]
+    return wafer[np.ix_(nearest_index(h, size), nearest_index(w, size))]
 
 
 def wafer_hash(wafer: np.ndarray) -> int:
