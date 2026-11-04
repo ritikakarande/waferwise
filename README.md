@@ -86,6 +86,52 @@ The weakest classes are Loc and Scratch. 13% of each is predicted as "none", and
 are most often confused with Edge-Loc, Loc, Center and Scratch. Small local defects and clean wafers are the hardest
 boundary, and that is where the label audit looks next.
 
+## Label audit
+
+The labels themselves are noisy: the dataset contains pixel-identical wafers with different labels. To find likely
+label errors in the **training set** (val and test labels are never changed):
+
+1. **Out-of-sample predictions.** The training split is cut into 5 folds (duplicates kept together). For each fold a
+   model is trained on the other 4 and predicts the held-out one, so every training wafer gets a prediction from a
+   model that never saw it. This is done for three different models: the baseline CNN, a smaller CNN with another
+   seed, and gradient-boosted trees on hand-made features (failure density grid, radial ring profile).
+2. **Confident learning** ([cleanlab](https://github.com/cleanlab/cleanlab)) on the averaged predictions estimates how
+   often each class is confused with each other class and flags wafers whose given label is unlikely.
+3. **Ensemble disagreement.** A wafer is dropped only if cleanlab flags it **and** all three models agree on the same
+   other class.
+
+```bash
+python scripts/cross_val.py --config configs/audit_cnn_a.yaml   # out-of-fold CNN predictions (folds can run in parallel)
+python scripts/cross_val.py --config configs/audit_cnn_b.yaml
+python scripts/label_audit.py                                   # -> audit/suspect_labels.csv + review grids
+python scripts/train.py --config configs/cleaned.yaml           # retrain without the dropped wafers
+```
+
+**What it found:** 862 wafers flagged by cleanlab and 563 (0.47% of training) flagged by both signals. The suspects
+concentrate in the confusable classes: 5.4% of Scratch labels, 4.8% of Loc and 2.3% of Edge-Loc, against 0.23% of
+"none". The most common corrections are none -> Edge-Loc (129), none -> Loc (77), Loc -> Edge-Loc (50) and
+Edge-Ring -> Edge-Loc (48). The full list with scores is in [`audit/suspect_labels.csv`](audit/suspect_labels.csv).
+
+![Most suspicious training labels](docs/figures/label_audit_top_suspects.png)
+
+Reviewing the grids by hand: many suspects are clear errors, such as "Center" wafers with no centre cluster, or
+"none" wafers covered in random failures. Others are honest borderline cases (a partial ring between Edge-Ring and
+Edge-Loc). A few are model mistakes, mostly thin scratches the 64x64 CNN does not see. So the audit is a useful filter
+for a human reviewer, not a replacement for one.
+
+**Effect of removing the 563 suspects** (mean +/- std over 2 seeds each):
+
+| Train data | Val macro-F1 | Test macro-F1 | Test macro recall | Test macro precision | Test recall Scratch / Center / Random |
+|---|---|---|---|---|---|
+| Real, uncleaned | 0.871 +/- 0.003 | 0.871 +/- 0.001 | 0.882 | 0.864 | 0.70 / 0.91 / 0.94 |
+| Real, cleaned | 0.869 +/- 0.002 | 0.869 +/- 0.002 | 0.892 | 0.849 | 0.74 / 0.93 / 0.96 |
+
+Removing 0.5% of the labels did **not** change macro-F1 beyond seed-to-seed noise. It shifted the model slightly
+towards finding more defects (recall +0.01) at the cost of a few more false alarms (precision -0.015). Two honest
+caveats: the gain is within noise for every class, and val/test contain the same kind of label errors (they are
+deliberately left untouched), so a model that has stopped learning "defect-looking wafer = none" is partly penalised
+by those noisy labels. The cleaned training set is carried forward to the synthetic-data experiments.
+
 ## Repository layout
 
 ```
@@ -95,9 +141,11 @@ src/waferwise/
   models.py   model definitions
   train.py    training loop
   evaluate.py macro-F1, per-class recall, confusion matrix
+  label_audit.py  cross-validation folds, cleanlab + ensemble disagreement
   utils.py    seeding, logging, paths
 scripts/      command-line entry points
 splits/       the fixed train/val/test split
+audit/        suspect-label list from the label audit (defines the cleaned training set)
 cpp/          C++ inference (OpenVINO + OpenCV)
 tests/        sanity tests
 notebooks/    exploration only
