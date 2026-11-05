@@ -19,6 +19,7 @@ seaborn>=0.13,<1
 
 # Deployment (ONNX -> OpenVINO, INT8 with NNCF, image I/O)
 onnx>=1.16,<2
+onnxscript>=0.5,<1  # used by torch.onnx.export
 openvino>=2024.4,<2027
 nncf>=2.13,<4
 opencv-python>=4.10,<6
@@ -26,3 +27,7 @@ opencv-python>=4.10,<6
 # Data download and tests
 kaggle>=1.6,<3
 pytest>=8.0,<10
+
+# Builds the C++ CLI (cpp/); a C++ compiler is needed separately
+cmake>=3.20
+ninja>=1.11

@@ -94,3 +94,14 @@ def test_processed_arrays_are_valid(data):
     assert set(np.unique(X)) <= {0, 1, 2}
     assert y.min() >= 0 and y.max() < len(CLASSES)
     assert list(data["classes"]) == CLASSES
+
+
+def test_opencv_exact_nearest_matches_the_training_resize():
+    # The C++ CLI resizes with cv::INTER_NEAREST_EXACT. Plain INTER_NEAREST picks different pixels.
+    import cv2
+
+    rng = np.random.default_rng(0)
+    for shape in [(25, 27), (26, 26), (15, 3), (212, 204), (100, 63)]:
+        wafer = rng.integers(0, 3, size=shape, dtype=np.uint8)
+        resized = cv2.resize(wafer, (64, 64), interpolation=cv2.INTER_NEAREST_EXACT)
+        assert np.array_equal(resized, resize_nearest(wafer, 64))
