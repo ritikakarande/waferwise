@@ -1,0 +1,23 @@
+# Real (uncleaned) training split + cVAE-generated wafers of three rare classes.
+# Scratch is left out: the realism check showed synthetic scratches are not recognisable (2%).
+experiment_name: synthetic
+data_config: configs/data.yaml
+seed: 42
+
+model:
+  channels: [16, 32, 64, 128]
+  dropout: 0.3
+
+train:
+  epochs: 30
+  batch_size: 256
+  lr: 0.001
+  weight_decay: 0.0001
+  class_weighting: inverse_sqrt   # none | inverse | inverse_sqrt
+  augment: true                   # random flips and 90-degree rotations
+  early_stopping_patience: 30     # longer than the run: val macro-F1 is too noisy at high LR to stop early
+  num_workers: 0
+  synthetic:
+    path: data/synthetic/cvae.npz
+    classes: [Near-full, Donut, Random]
+    per_class: 2000

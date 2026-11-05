@@ -14,6 +14,6 @@ train:
   weight_decay: 0.0001
   class_weighting: inverse_sqrt   # none | inverse | inverse_sqrt
   augment: true                   # random flips and 90-degree rotations
-  early_stopping_patience: 6      # epochs without val macro-F1 improvement
+  early_stopping_patience: 30     # longer than the run: val macro-F1 is too noisy at high LR to stop early
   num_workers: 0
   drop_list: audit/suspect_labels.csv   # wafers with drop=1 are removed from training

@@ -114,12 +114,52 @@ def drop_listed_wafers(train_idx: np.ndarray, source_index: np.ndarray, drop_csv
     return train_idx[keep]
 
 
+def add_rare_class_wafers(
+    data: dict, train_idx: np.ndarray, tcfg: dict, classes: list[str], seed: int
+) -> tuple[dict, np.ndarray]:
+    """Extend the training set with extra rare-class wafers, as set in the config.
+
+    ``train.oversample: {classes, extra_per_class}`` repeats randomly chosen real training wafers of
+    those classes (with replacement; augmentation makes the repeats differ).
+    ``train.synthetic: {path, classes, per_class}`` appends generated wafers of those classes.
+
+    Returns the image/label arrays for the training loader and the indices into them. Only the
+    training set is ever extended; validation and test use ``data`` unchanged.
+    """
+    rng = np.random.default_rng(seed)
+    images, labels, indices = data["X"], data["y"], train_idx
+
+    if over := tcfg.get("oversample"):
+        extra = [
+            rng.choice(train_idx[labels[train_idx] == classes.index(name)], over["extra_per_class"], replace=True)
+            for name in over["classes"]
+        ]
+        indices = np.concatenate([indices, *extra])
+        log.info("Oversampling: +%d repeated real wafers each for %s", over["extra_per_class"], over["classes"])
+
+    if syn := tcfg.get("synthetic"):
+        synthetic = np.load(repo_path(syn["path"]))
+        picks = [
+            rng.choice(np.flatnonzero(synthetic["y"] == classes.index(name)), syn["per_class"], replace=False)
+            for name in syn["classes"]
+        ]
+        offset = len(images)  # synthetic wafers are stored after the real ones
+        images = np.concatenate([images, synthetic["X"]])
+        labels = np.concatenate([labels, synthetic["y"]])
+        indices = np.concatenate([indices, offset + np.concatenate(picks)])
+        log.info("Synthetic: +%d generated wafers each for %s (%s)", syn["per_class"], syn["classes"], syn["path"])
+
+    return {"X": images, "y": labels}, indices
+
+
 def train(cfg: dict, out_dir: str | Path, limit: int | None = None, train_indices: np.ndarray | None = None) -> dict:
     """Train a model from a config dict; saves checkpoint, history and val report into ``out_dir``.
 
     ``limit`` caps the number of training samples (for quick smoke tests). ``train_indices``
     replaces the official training split (used for cross-validation folds). If the config sets
-    ``train.drop_list``, wafers flagged in that label-audit CSV are removed from training.
+    ``train.drop_list``, wafers flagged in that label-audit CSV are removed from training;
+    ``train.oversample`` and ``train.synthetic`` add rare-class wafers (see ``add_rare_class_wafers``).
+    Class weights are computed on the final training mix.
     """
     out_dir = repo_path(out_dir)
     out_dir.mkdir(parents=True, exist_ok=True)
@@ -134,12 +174,16 @@ def train(cfg: dict, out_dir: str | Path, limit: int | None = None, train_indice
     if limit is not None:
         train_idx = np.random.default_rng(cfg["seed"]).choice(train_idx, size=min(limit, len(train_idx)), replace=False)
 
-    train_loader = make_loader(data, train_idx, tcfg["batch_size"], True, tcfg, cfg["seed"])
+    train_data, train_idx = add_rare_class_wafers(data, train_idx, tcfg, classes, cfg["seed"])
+
+    train_loader = make_loader(train_data, train_idx, tcfg["batch_size"], True, tcfg, cfg["seed"])
     val_loader = make_loader(data, splits["val"], 1024, False, tcfg, cfg["seed"])
 
     # channels_last memory layout makes these convolutions ~2x faster on CPU.
     model = build_model(cfg["model"], len(classes)).to(device, memory_format=torch.channels_last)
-    weights = class_weights(data["y"][train_idx], len(classes), tcfg["class_weighting"])
+    train_labels = train_data["y"][train_idx]
+    log.info("Training mix: %s", dict(zip(classes, np.bincount(train_labels, minlength=len(classes)).tolist())))
+    weights = class_weights(train_labels, len(classes), tcfg["class_weighting"])
     criterion = nn.CrossEntropyLoss(weight=weights.to(device))
     optimizer = torch.optim.AdamW(model.parameters(), lr=tcfg["lr"], weight_decay=tcfg["weight_decay"])
     scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=tcfg["epochs"])

@@ -62,3 +62,25 @@ def test_predict_returns_probabilities():
     assert probs.shape == (10, len(CLASSES))
     assert np.allclose(probs.sum(1), 1.0, atol=1e-5)
     assert np.array_equal(y, labels)
+
+
+def test_rare_class_wafers_are_added_to_training_only(tmp_path):
+    from waferwise.train import add_rare_class_wafers
+
+    classes = ["a", "b", "c"]
+    data = {"X": np.zeros((30, 4, 4), dtype=np.uint8), "y": np.array([0] * 20 + [1] * 5 + [2] * 5)}
+    train_idx = np.arange(25)  # rows 25-29 are "val" and must never be used
+    synthetic = tmp_path / "synthetic.npz"
+    np.savez(synthetic, X=np.full((12, 4, 4), 2, dtype=np.uint8), y=np.array([1] * 6 + [2] * 6))
+    tcfg = {
+        "oversample": {"classes": ["b"], "extra_per_class": 10},
+        "synthetic": {"path": str(synthetic), "classes": ["c"], "per_class": 4},
+    }
+    out, idx = add_rare_class_wafers(data, train_idx, tcfg, classes, seed=0)
+
+    assert len(idx) == 25 + 10 + 4
+    repeats, synth = idx[25:35], idx[35:]
+    assert set(repeats) <= set(range(20, 25))      # repeats are real class-b training wafers
+    assert (synth >= 30).all() and (out["y"][synth] == 2).all() and (out["X"][synth] == 2).all()
+    assert not np.isin(idx, np.arange(25, 30)).any()  # no validation rows leak in
+    assert np.array_equal(out["X"][:30], data["X"]) and np.array_equal(out["y"][:30], data["y"])

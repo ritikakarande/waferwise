@@ -1,0 +1,22 @@
+# Real (uncleaned) training split + repeated real wafers of three rare classes.
+# Same classes and same number of extra wafers as the synthetic arm, so the two are directly comparable.
+experiment_name: oversampled
+data_config: configs/data.yaml
+seed: 42
+
+model:
+  channels: [16, 32, 64, 128]
+  dropout: 0.3
+
+train:
+  epochs: 30
+  batch_size: 256
+  lr: 0.001
+  weight_decay: 0.0001
+  class_weighting: inverse_sqrt   # none | inverse | inverse_sqrt
+  augment: true                   # random flips and 90-degree rotations
+  early_stopping_patience: 30     # longer than the run: val macro-F1 is too noisy at high LR to stop early
+  num_workers: 0
+  oversample:
+    classes: [Near-full, Donut, Random]
+    extra_per_class: 2000
