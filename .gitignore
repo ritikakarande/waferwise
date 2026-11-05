@@ -262,3 +262,6 @@ __pycache__/
 Thumbs.db
 .vscode/
 .idea/
+
+# C++ dependencies unpacked locally
+third_party/

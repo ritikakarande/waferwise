@@ -79,6 +79,7 @@ every wafer already scores 85%.
 |---|---|---|---|---|---|
 | Baseline CNN (FP32, PyTorch) | real, uncleaned | 0.873 | 0.871 | 0.893 | 0.972 |
 | **Final model** (same CNN, see [below](#which-training-data-works-best)) | real + oversampled rare classes | 0.874 | 0.872 | 0.897 | 0.974 |
+| Final model, INT8 (OpenVINO), see [Deployment](#deployment) | real + oversampled rare classes | 0.867 | 0.872 | 0.897 | 0.974 |
 
 Per-class test recall for the baseline:
 
@@ -218,6 +219,73 @@ Per-class test results for the final model:
 | Recall | 0.90 | 0.94 | 0.83 | 0.97 | 0.74 | 1.00 | 0.97 | 0.73 | 0.99 |
 | Precision | 0.94 | 0.70 | 0.82 | 0.97 | 0.76 | 0.95 | 0.83 | 0.71 | 0.99 |
 
+## Deployment
+
+```bash
+python scripts/export_model.py                  # ONNX, OpenVINO FP32, INT8 -> outputs/deploy/
+python scripts/calibrate_gate.py                # picks the review threshold on val -> gate.json
+python scripts/evaluate_deployed.py --split test
+```
+
+The final model goes from PyTorch to ONNX to OpenVINO, then to INT8 with NNCF. Quantisation is calibrated on 900 training
+wafers, 100 per class, so the rare classes are represented. The threshold and all quantisation settings were fixed on
+val before the test set was used.
+
+| Test set | FP32 | INT8 |
+|---|---|---|
+| Macro-F1 | 0.8723 | 0.8717 |
+| Macro recall | 0.8970 | 0.8972 |
+| Accuracy | 0.9735 | 0.9737 |
+| Weights file | 0.39 MB | 0.10 MB |
+
+Every class's test recall stays within 0.006 of FP32. The largest precision change is Random, from 0.83 to 0.81. The
+first INT8 attempt lost 0.015
+macro-F1 on val, with Random precision falling to 0.71. Turning on full bias correction cut that loss to 0.007 on val.
+Exported FP32 matches PyTorch to within 0.000003 in probability with no label changes.
+
+### Confidence gate
+
+A wafer is decided automatically only if the model's top probability reaches a threshold. Anything below it goes to a
+person. The threshold is 0.871, the lowest value that reaches 99.5% accuracy on automatic decisions on val, measured on
+the INT8 model itself.
+
+| Test set (25,966 wafers) | No gate | With gate |
+|---|---|---|
+| Sent to review | 0% | 7.4% |
+| Wrong automatic decisions | 683 | 130 |
+| Defects called "none" | 225 | 60 |
+| Accuracy on automatic decisions | 97.4% | 99.46% |
+
+The target was 99.5% and test reached 99.46%, as expected from val: on held-out halves of val the worst case was 99.37%.
+
+Review is not spread evenly. It takes 56% of Loc wafers, 44% of Scratch and 41% of Edge-Loc, but only 4% of "none". The
+gate buys its accuracy by removing the hard classes from automation, and 60 defects still pass as clean.
+
+The threshold is a business choice. On val, a 99.0% target reviews 4.2% of wafers and a 99.8% target reviews 15.8%.
+Only the ranking of confidences matters here, so the model did not need temperature scaling.
+
+**Why not conformal prediction?** I tried per-class conformal thresholds first. They kept their promised coverage, but
+coverage is a different goal from accurate automatic decisions. At a similar 8.6% review rate on val they left about 7
+times as many errors as the plain threshold, and more errors than having no gate at all. The method was also unstable:
+going from alpha 0.1 to 0.05 moved review from 8.6% to 99.6%, because the Loc and Scratch thresholds fall to 0.02-0.04 and
+those classes then enter almost every prediction set. The simple threshold is both better and easier to explain.
+
+### C++ inference
+
+`cpp/` contains `waferwise_infer`, a command-line tool that loads the INT8 model and `gate.json`, classifies PNG wafer
+maps, and writes each decision to a CSV file. Build steps are in [cpp/README.md](cpp/README.md).
+
+Its answers were compared with Python's using `scripts/check_cpp.py`:
+
+| Check on val | Wafers | Different labels | Different gate decisions |
+|---|---|---|---|
+| 64x64 PNGs, batch sizes 1, 32 and 1024 | 25,955 | 0 | 0 |
+| Original-size wafers (166 different sizes), resized by the C++ tool | 3,000 | 0 | 0 |
+
+Confidences agree to 0.0000005, which is the rounding in the CSV. The original-size check matters because plain OpenCV
+`INTER_NEAREST` picks different pixels from the resize used in training. The tool uses `INTER_NEAREST_EXACT`, and
+a test guards that match.
+
 ## Repository layout
 
 ```
@@ -229,6 +297,8 @@ src/waferwise/
   evaluate.py macro-F1, per-class recall, confusion matrix
   label_audit.py  cross-validation folds, cleanlab + ensemble disagreement
   generative.py   conditional VAE and die-level sampling of synthetic wafers
+  deploy.py   ONNX and OpenVINO export, INT8 quantisation
+  gate.py     confidence threshold and its report
   utils.py    seeding, logging, paths
 scripts/      command-line entry points
 splits/       the fixed train/val/test split
