@@ -63,7 +63,10 @@ python scripts/evaluate.py --run outputs/baseline --split test   # final numbers
 ```
 
 Each run writes `model.pt`, `history.json`, `training_curves.png`, `metrics_val.json` and a row-normalised
-confusion matrix (`confusion_val.png`) to `outputs/<experiment_name>/`. Models are selected by validation macro-F1.
+confusion matrix (`confusion_val.png`) to `outputs/<experiment_name>/`. Every run uses the full 30 epochs and keeps the
+checkpoint with the best validation macro-F1. Early stopping is effectively off: validation macro-F1 swings widely until
+the cosine learning rate decays (rare classes have only 21-178 validation wafers), so a short patience stopped some runs
+at random around epoch 16 and made equal setups look different.
 Every report includes macro-F1 and per-class recall, because plain accuracy is misleading here: predicting "none" for
 every wafer already scores 85%.
 
@@ -75,6 +78,7 @@ every wafer already scores 85%.
 | Model | Train data | Val macro-F1 | Test macro-F1 | Test macro recall | Test accuracy |
 |---|---|---|---|---|---|
 | Baseline CNN (FP32, PyTorch) | real, uncleaned | 0.873 | 0.871 | 0.893 | 0.972 |
+| **Final model** (same CNN, see [below](#which-training-data-works-best)) | real + oversampled rare classes | 0.874 | 0.872 | 0.897 | 0.974 |
 
 Per-class test recall for the baseline:
 
@@ -123,14 +127,14 @@ for a human reviewer, not a replacement for one.
 
 | Train data | Val macro-F1 | Test macro-F1 | Test macro recall | Test macro precision | Test recall Scratch / Center / Random |
 |---|---|---|---|---|---|
-| Real, uncleaned | 0.871 +/- 0.003 | 0.871 +/- 0.001 | 0.882 | 0.864 | 0.70 / 0.91 / 0.94 |
-| Real, cleaned | 0.869 +/- 0.002 | 0.869 +/- 0.002 | 0.892 | 0.849 | 0.74 / 0.93 / 0.96 |
+| Real, uncleaned | 0.874 +/- 0.001 | 0.871 +/- 0.000 | 0.892 | 0.853 | 0.78 / 0.93 / 0.95 |
+| Real, cleaned | 0.869 +/- 0.002 | 0.869 +/- 0.002 | 0.894 | 0.848 | 0.76 / 0.93 / 0.95 |
 
-Removing 0.5% of the labels did **not** change macro-F1 beyond seed-to-seed noise. It shifted the model slightly
-towards finding more defects (recall +0.01) at the cost of a few more false alarms (precision -0.015). Two honest
-caveats: the gain is within noise for every class, and val/test contain the same kind of label errors (they are
+Removing 0.5% of the labels did **not** measurably change the model: macro-F1, macro recall and macro precision all
+stay within seed-to-seed noise. One honest caveat: val and test contain the same kind of label errors (they are
 deliberately left untouched), so a model that has stopped learning "defect-looking wafer = none" is partly penalised
-by those noisy labels. The cleaned training set is carried forward to the synthetic-data experiments.
+by those noisy labels, and any real gain may be hidden. The audit's lasting value is the list of suspect wafers for a
+human reviewer, rather than a better score.
 
 ## Synthetic rare defects
 
@@ -169,8 +173,50 @@ texture-like defects (Near-full, Random, partly Donut) come out recognisable. Th
 one-die-wide line into background noise. Sharpening the probabilities or lowering the sampling temperature helped
 Near-full and Donut a little but hurt Random, and did not rescue Scratch, so the plain settings are kept.
 
-Whether these samples actually improve rare-class recall is tested next, against simple oversampling of the real
-rare wafers.
+## Which training data works best
+
+All five setups use the same CNN and settings, two seeds each, and the full 30 epochs. Oversampling and synthetic data
+add the same thing: 2,000 extra wafers each for Near-full, Donut and Random, in the training set only. Scratch gets no
+extras, because synthetic scratches failed the realism check. Loss weights are computed on the final training mix, so
+the extra wafers do not over-weight those classes.
+
+```bash
+python scripts/train.py --config configs/oversampled.yaml --seed 1   # also: synthetic.yaml, cleaned_synthetic.yaml
+python scripts/compare_runs.py --split val --out outputs/compare     --arm real outputs/baseline outputs/baseline_seed1     --arm oversampled outputs/oversampled_seed42 outputs/oversampled_seed1
+```
+
+Mean +/- std over 2 seeds:
+
+| Train data | Val macro-F1 | Test macro-F1 | Test macro recall | Test macro precision | Test recall Donut / Near-full / Random |
+|---|---|---|---|---|---|
+| Real only | 0.874 +/- 0.001 | 0.871 +/- 0.000 | 0.892 | 0.853 | 0.91 / 0.90 / 0.95 |
+| Cleaned | 0.869 +/- 0.002 | 0.869 +/- 0.002 | 0.894 | 0.848 | 0.92 / 0.93 / 0.95 |
+| Real + oversampling | 0.873 +/- 0.001 | 0.865 +/- 0.011 | 0.896 | 0.840 | 0.94 / 0.95 / 0.97 |
+| Real + synthetic | 0.842 +/- 0.009 | 0.824 +/- 0.010 | 0.848 | 0.807 | 0.83 / 0.81 / 0.88 |
+| Cleaned + synthetic | 0.845 +/- 0.003 | 0.825 +/- 0.001 | 0.848 | 0.810 | 0.84 / 0.86 / 0.88 |
+
+**Synthetic wafers made the model worse**, by about 0.03-0.05 macro-F1 on both val and test, and they lowered recall on
+the very classes they were meant to help. The realism check predicted why. A sample labelled Donut that looks like Loc
+teaches the model that Loc-like wafers can be Donut, so the class boundaries blur: on validation, Donut precision fell
+from 0.85 to 0.71, Near-full from 0.89 to 0.74 and Random from 0.88 to 0.82, with more confusion between Donut and Loc
+and between Random and Near-full. Adding more data only helps if it is good enough, and a VAE that a detector can spot
+(AUC ~0.87) was not. A sharper generator might change this, but a new generator would have to beat oversampling to be
+worth its cost.
+
+**Oversampling ties with real-only on macro-F1** and leans towards rare-class recall, at the cost of some precision.
+With so few rare wafers (21 Near-full and 83 Donut in test) these recall differences are within noise.
+
+**Final model:** real + oversampling, seed 1, chosen on validation before any oversampled or synthetic model was run on test
+(highest val macro-F1 within seed noise, tie broken by rare-class recall). On test it scores macro-F1 0.872, macro
+recall 0.897 and accuracy 0.974. The other seed scored 0.857, so 0.87 +/- 0.01 is the fairer expectation than the single
+number. It is a tie-break between equals: the plain baseline would be a defensible choice too.
+
+Per-class test results for the final model:
+
+| | Center | Donut | Edge-Loc | Edge-Ring | Loc | Near-full | Random | Scratch | none |
+|---|---|---|---|---|---|---|---|---|---|
+| Recall | 0.90 | 0.94 | 0.83 | 0.97 | 0.74 | 1.00 | 0.97 | 0.73 | 0.99 |
+| Precision | 0.94 | 0.70 | 0.82 | 0.97 | 0.76 | 0.95 | 0.83 | 0.71 | 0.99 |
 
 ## Repository layout
 
