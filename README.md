@@ -2,7 +2,7 @@
 
 Wafer-map defect classification on WM-811K, from noisy, imbalanced data to a model that runs in real time on an Intel CPU.
 
-> The data was dirty and imbalanced. I fixed the labels, created the rare defects that were missing, then shipped a model that runs in real time on an Intel CPU and flags what it's unsure about.
+> The data was dirty and imbalanced. I audited the labels, generated synthetic rare defects, and measured what actually helped: simple oversampling beat the synthetic data. Then I shipped a model that runs in real time on an Intel CPU and flags what it's unsure about.
 
 **Status:** work in progress. Results, benchmarks and a demo will be added here.
 
