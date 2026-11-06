@@ -9,12 +9,10 @@ Pixels are black (off wafer), grey (pass) or white (fail). File names keep the s
 import argparse
 
 import cv2
-import numpy as np
 
+from waferwise.deploy import PIXEL_FOR_CODE
 from waferwise.train import load_data
 from waferwise.utils import repo_path
-
-PIXEL_FOR_CODE = np.array([0, 128, 255], dtype=np.uint8)
 
 
 def main() -> None:

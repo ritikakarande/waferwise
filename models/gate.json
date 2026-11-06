@@ -1,0 +1,16 @@
+{
+  "threshold": 0.8711456060409546,
+  "target_auto_accuracy": 0.995,
+  "image_size": 64,
+  "classes": [
+    "Center",
+    "Donut",
+    "Edge-Loc",
+    "Edge-Ring",
+    "Loc",
+    "Near-full",
+    "Random",
+    "Scratch",
+    "none"
+  ]
+}

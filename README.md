@@ -4,7 +4,52 @@ Wafer-map defect classification on WM-811K, from noisy, imbalanced data to a mod
 
 > The data was dirty and imbalanced. I audited the labels, generated synthetic rare defects, and measured what actually helped: simple oversampling beat the synthetic data. Then I shipped a model that runs in real time on an Intel CPU and flags what it's unsure about.
 
-**Status:** work in progress. Results, benchmarks and a demo will be added here.
+![Animated demo: each wafer map is shown with the model's prediction, its confidence and the gate's decision](docs/figures/demo.gif)
+
+## Results
+
+Final model on the test set, which was never used for tuning or for choosing between models:
+
+| Measure | Result |
+|---|---|
+| Macro-F1 | 0.872 (0.87 +/- 0.01 across seeds) |
+| Macro recall | 0.897 |
+| Loss from INT8 | 0.0006 macro-F1 |
+| Time per wafer | 0.53 ms median, 0.88 ms p99, one CPU thread in C++ |
+| Speed-up over PyTorch | 5.2x per wafer, 3.8x from PNG to CSV |
+| Model size | 0.10 MB, 4x smaller than FP32 |
+| Confidence gate | reviews 7.4% of wafers, cuts wrong decisions from 683 to 130 and missed defects from 225 to 60 |
+
+INT8 recall per class:
+
+| Center | Donut | Edge-Loc | Edge-Ring | Loc | Near-full | Random | Scratch | none |
+|---|---|---|---|---|---|---|---|---|
+| 0.90 | 0.94 | 0.82 | 0.98 | 0.75 | 1.00 | 0.97 | 0.73 | 0.99 |
+
+Three findings shaped the final model:
+
+- **Label cleaning changed nothing measurable.** Dropping 563 suspect wafers left test macro-F1 at 0.869, against 0.871
+  without cleaning.
+- **Synthetic wafers made things worse.** They lowered test macro-F1 to 0.82, because they blur the boundaries between
+  classes. Simple oversampling kept it at 0.87.
+- **Speed needed careful measurement.** My first benchmark showed C++ 3x faster than Python, which was false.
+  See [Benchmarks](#benchmarks).
+
+## Try it
+
+The INT8 model and 12 sample wafers are in this repository, so the demo needs no dataset and no C++ build:
+
+```bash
+python -m venv .venv
+source .venv/bin/activate        # Windows: .venv\Scripts\activate
+pip install -r requirements.txt
+pip install -e .
+python scripts/demo.py
+```
+
+The samples are a seeded random draw from the validation split: one per class, plus three wafers the gate sends to
+review. That makes review far more common here (7 of 12) than in real use (7%). The draw also includes a real failure:
+an Edge-Ring wafer called "none" with 98% confidence, which passes the gate.
 
 ## Pipeline
 
@@ -12,7 +57,7 @@ Wafer-map defect classification on WM-811K, from noisy, imbalanced data to a mod
 2. Label audit with confident learning (cleanlab) to find likely mislabelled wafers
 3. Synthetic rare defects from a small conditional generative model
 4. Deployment: ONNX -> OpenVINO, INT8 with NNCF, C++ inference CLI, confidence gate
-5. Benchmarks: FP32 vs INT8, Python vs C++
+5. Benchmarks: FP32 vs INT8, PyTorch vs OpenVINO, Python vs C++
 
 ## Setup
 
@@ -73,7 +118,7 @@ every wafer already scores 85%.
 **Baseline:** a 4-block CNN (~99k parameters) on 1x64x64 maps, AdamW, cosine learning rate, random flips and
 90-degree rotations, and cross-entropy weighted by 1/sqrt(class frequency).
 
-## Results so far
+## Baseline results
 
 | Model | Train data | Val macro-F1 | Test macro-F1 | Test macro recall | Test accuracy |
 |---|---|---|---|---|---|
@@ -89,7 +134,7 @@ Per-class test recall for the baseline:
 
 The weakest classes are Loc and Scratch. 13% of each is predicted as "none", and in the other direction "none" wafers
 are most often confused with Edge-Loc, Loc, Center and Scratch. Small local defects and clean wafers are the hardest
-boundary, and that is where the label audit looks next.
+boundary.
 
 ## Label audit
 
@@ -239,8 +284,8 @@ val before the test set was used.
 | Weights file | 0.39 MB | 0.10 MB |
 
 Every class's test recall stays within 0.006 of FP32. The largest precision change is Random, from 0.83 to 0.81. The
-first INT8 attempt lost 0.015
-macro-F1 on val, with Random precision falling to 0.71. Turning on full bias correction cut that loss to 0.007 on val.
+first INT8 attempt lost 0.015 macro-F1 on val, with Random precision falling to 0.71. Turning on full bias correction
+cut that loss to 0.007 on val.
 Exported FP32 matches PyTorch to within 0.000003 in probability with no label changes.
 
 ### Confidence gate
@@ -286,6 +331,60 @@ Confidences agree to 0.0000005, which is the rounding in the CSV. The original-s
 `INTER_NEAREST` picks different pixels from the resize used in training. The tool uses `INTER_NEAREST_EXACT`, and
 a test guards that match.
 
+## Benchmarks
+
+```bash
+python scripts/benchmark.py        # needs the exported model and the C++ CLI -> outputs/benchmark/benchmark.json
+python scripts/plot_benchmark.py
+```
+
+Every version runs the same job: read PNG wafers, run the model, apply the gate and write one CSV row per wafer. Each of
+the 20 setups ran for 20 seconds, 3 times, in a shuffled order.
+
+![Median time to classify one wafer on one CPU thread](docs/figures/benchmark_latency.png)
+
+One wafer at a time on one thread, with test accuracy for comparison:
+
+| Version | Test macro-F1 | Test macro recall | Weights | Median | p99 | Wafers/s, PNG to CSV |
+|---|---|---|---|---|---|---|
+| PyTorch FP32 | 0.872 | 0.897 | 0.39 MB | 2.78 ms | 5.37 ms | 276 |
+| OpenVINO FP32, Python | 0.872 | 0.897 | 0.39 MB | 1.02 ms | 1.41 ms | 624 |
+| OpenVINO FP32, C++ | 0.872 | 0.897 | 0.39 MB | 0.89 ms | 1.71 ms | 746 |
+| OpenVINO INT8, Python | 0.872 | 0.897 | 0.10 MB | 0.65 ms | 1.21 ms | 825 |
+| **OpenVINO INT8, C++** | 0.872 | 0.897 | 0.10 MB | **0.53 ms** | **0.88 ms** | **1,058** |
+
+OpenVINO INT8 in C++ at other settings. The default is 8 threads on this CPU:
+
+| Batch | Threads | Median per batch | Wafers/s, model only | Wafers/s, PNG to CSV |
+|---|---|---|---|---|
+| 1 | 1 | 0.53 ms | 1,807 | 1,058 |
+| 1 | default | 0.53 ms | 1,772 | 980 |
+| 256 | 1 | 95.7 ms | 2,639 | 1,549 |
+| 256 | default | 39.0 ms | 6,408 | 2,241 |
+
+What the numbers show:
+
+- **INT8 is the biggest step within OpenVINO.** In C++ it is 1.7x faster than FP32 per wafer and 2x faster at batch 256,
+  for 0.0006 macro-F1.
+- **C++ does not run the model faster.** Both languages call the same OpenVINO runtime, and at batch 256 on one thread
+  they match: 2,639 and 2,623 wafers/s. C++ saves about 0.12 ms of call overhead per wafer, and from PNG to CSV it
+  handles 22-28% more wafers across the four settings.
+- **More threads do not help single wafers.** The model is too small to split up. PyTorch's default 16 threads make it
+  worse: median 4.0 ms and p99 74 ms, against 2.8 ms and 5.4 ms on one thread.
+- **Reading PNGs is now the bottleneck.** At batch 256 the model handles 6,408 wafers/s but the full job only 2,241,
+  because files are read one at a time. Loading them in parallel is the obvious next step.
+
+**How far to trust these numbers.** They come from one Intel Core i7-14650HX laptop on battery in its Silent power plan,
+so they describe a power-limited CPU. Plugged in it should be faster, but I have not measured that. With only 3 repeats,
+treat small differences with care. The batch 256 runs on default threads varied most: INT8 C++ ranged from 4,914 to
+6,626 wafers/s.
+
+**The false result.** My first benchmark ran a fixed number of wafers and showed C++ 3x faster than Python. Python also
+jumped between two speeds, 3x apart. A longer run explained it: in this power state the CPU runs fast for about 3 seconds
+under load and then slows down, by up to 3x, and C++ slowed down in the same way. C++ had only looked fast because its short runs ended
+inside that window. Now every run lasts a fixed time, and the first 5 seconds are left out, so all versions are measured
+in the same sustained state.
+
 ## Repository layout
 
 ```
@@ -299,11 +398,14 @@ src/waferwise/
   generative.py   conditional VAE and die-level sampling of synthetic wafers
   deploy.py   ONNX and OpenVINO export, INT8 quantisation
   gate.py     confidence threshold and its report
+  benchmark.py  the same job in PyTorch, Python and C++, and its statistics
   utils.py    seeding, logging, paths
 scripts/      command-line entry points
 splits/       the fixed train/val/test split
 audit/        suspect-label list from the label audit (defines the cleaned training set)
 cpp/          C++ inference (OpenVINO + OpenCV)
+models/       INT8 model and gate settings, for the demo
+demo/         sample wafers for the demo
+docs/figures/ figures used in this README
 tests/        sanity tests
-notebooks/    exploration only
 ```

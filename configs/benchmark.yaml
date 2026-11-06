@@ -1,0 +1,18 @@
+# Speed of the deployed model. Every case runs the same job: read PNG wafers, run the model, apply the gate, write a CSV.
+deploy_config: configs/deploy.yaml
+out_dir: outputs/benchmark
+seed: 42
+
+wafers: 25955               # the whole val split; runs cycle through them
+run_seconds: 20             # every run lasts this long, so fast and slow cases get the same conditions
+repeats: 3                  # every case runs this many times, in a shuffled order, so slow spells hit all cases alike
+warmup_seconds: 5           # left out of all figures: the CPU boosts for its first seconds under load
+
+precisions: [fp32, int8]
+batch_sizes: [1, 256]
+threads: [1, 0]             # 0 keeps each library's default
+
+cpp_binary: cpp/build/waferwise_infer.exe
+cpp_dll_dirs:
+  - .venv/Lib/site-packages/openvino/libs
+  - third_party/opencv/build/x64/vc16/bin

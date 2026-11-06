@@ -45,9 +45,18 @@ cpp\build\waferwise_infer.exe --model outputs\deploy\wafer_cnn_int8.xml --gate o
 | `--output` | results file, default `results.csv` |
 | `--batch` | wafers per inference call, default 1 |
 | `--device` | OpenVINO device, default `CPU` |
+| `--threads` | inference threads, default is OpenVINO's own choice |
+| `--timings` | also write per-batch timings to this CSV file, used by `scripts/benchmark.py` |
+| `--seconds` | cycle through the wafers for this long instead of one pass, for benchmarks |
 
 Input PNGs are single-channel wafer maps at any size: black is off wafer, grey is a passing die and white is a failing
 die. `scripts/export_wafer_images.py` writes them from the dataset.
+
+To try it on the committed samples:
+
+```bat
+cpp\build\waferwise_infer.exe --model models\wafer_cnn_int8.xml --gate models\gate.json --input demo\wafers
+```
 
 The output has one row per wafer, and the console shows a summary with timings:
 

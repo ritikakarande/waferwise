@@ -265,3 +265,7 @@ Thumbs.db
 
 # C++ dependencies unpacked locally
 third_party/
+
+# Small INT8 model and gate, committed so that the demo runs without the dataset
+!models/*.xml
+!models/*.bin

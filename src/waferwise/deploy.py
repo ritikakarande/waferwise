@@ -6,11 +6,17 @@ probabilities (N, C), so the softmax is part of the model and C++ does not need 
 
 from pathlib import Path
 
+import cv2
 import nncf
 import numpy as np
 import openvino as ov
 import torch
 from torch import nn
+
+
+# PNG wafer maps, the input format of the C++ CLI: black off wafer, grey pass, white fail.
+PIXEL_FOR_CODE = np.array([0, 128, 255], dtype=np.uint8)
+VALUE_FOR_PIXEL = np.where(np.arange(256) < 64, 0.0, np.where(np.arange(256) < 192, 0.5, 1.0)).astype(np.float32)
 
 
 def export_onnx(model: nn.Module, path: Path, image_size: int = 64) -> None:
@@ -32,6 +38,14 @@ def export_onnx(model: nn.Module, path: Path, image_size: int = 64) -> None:
 def to_input(X: np.ndarray) -> np.ndarray:
     """Wafer maps (N, S, S) with codes 0/1/2 -> float model input (N, 1, S, S) in [0, 1]."""
     return (X.astype(np.float32) / 2.0)[:, None]
+
+
+def load_wafer_png(path: Path | str, size: int = 64) -> np.ndarray:
+    """Read one PNG wafer map as a float image (S, S), the same steps as load_wafer in cpp/src/main.cpp."""
+    image = cv2.imread(str(path), cv2.IMREAD_GRAYSCALE)
+    if image is None:
+        raise OSError(f"Cannot read {path}")
+    return VALUE_FOR_PIXEL[cv2.resize(image, (size, size), interpolation=cv2.INTER_NEAREST_EXACT)]
 
 
 def predict_openvino(model: ov.Model | str | Path, X: np.ndarray, batch_size: int = 1024) -> np.ndarray:

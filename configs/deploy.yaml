@@ -1,5 +1,5 @@
 # Deployment of the final model: ONNX -> OpenVINO FP32 -> INT8 (NNCF) -> confidence gate.
-run: outputs/oversampled_seed1      # chosen on validation on Day 5 (see README)
+run: outputs/oversampled_seed1      # chosen on validation (see README)
 out_dir: outputs/deploy
 seed: 42
 

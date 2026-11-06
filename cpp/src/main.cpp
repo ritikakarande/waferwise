@@ -6,7 +6,8 @@
 //
 // Usage:
 //   waferwise_infer --model wafer_cnn_int8.xml --gate gate.json --input <png or folder>
-//                   [--output results.csv] [--batch 1] [--device CPU]
+//                   [--output results.csv] [--batch 1] [--device CPU] [--threads N] [--timings timings.csv]
+//                   [--seconds S]
 
 #include <algorithm>
 #include <chrono>
@@ -32,7 +33,15 @@ struct Options {
     std::string model, gate, input;
     std::string output = "results.csv";
     std::string device = "CPU";
+    std::string timings;  // optional per-batch timing file, read by scripts/benchmark.py
     std::size_t batch = 1;
+    int threads = 0;  // 0 keeps the OpenVINO default
+    double seconds = 0.0;  // above 0: cycle through the wafers for this long, for benchmarks
+};
+
+struct BatchTiming {
+    std::size_t wafers;
+    double load_ms, infer_ms, total_ms;
 };
 
 struct Gate {
@@ -49,13 +58,17 @@ Options parse_args(int argc, char** argv) {
     Options options;
     std::map<std::string, std::string*> text_flags = {
         {"--model", &options.model}, {"--gate", &options.gate},     {"--input", &options.input},
-        {"--output", &options.output}, {"--device", &options.device},
+        {"--output", &options.output}, {"--device", &options.device}, {"--timings", &options.timings},
     };
     for (int i = 1; i < argc; i += 2) {
         const std::string flag = argv[i];
         if (i + 1 >= argc) throw std::runtime_error("Missing value for " + flag);
         if (flag == "--batch") {
             options.batch = std::stoul(argv[i + 1]);
+        } else if (flag == "--threads") {
+            options.threads = std::stoi(argv[i + 1]);
+        } else if (flag == "--seconds") {
+            options.seconds = std::stod(argv[i + 1]);
         } else if (text_flags.count(flag) != 0) {
             *text_flags[flag] = argv[i + 1];
         } else {
@@ -65,7 +78,7 @@ Options parse_args(int argc, char** argv) {
     if (options.model.empty() || options.gate.empty() || options.input.empty() || options.batch == 0) {
         throw std::runtime_error(
             "Usage: waferwise_infer --model <xml> --gate <json> --input <png or folder> "
-            "[--output results.csv] [--batch 1] [--device CPU]");
+            "[--output results.csv] [--batch 1] [--device CPU] [--threads N] [--timings timings.csv] [--seconds S]");
     }
     return options;
 }
@@ -119,7 +132,9 @@ void run(const Options& options) {
     const std::size_t num_classes = gate.classes.size();
 
     ov::Core core;
-    ov::CompiledModel model = core.compile_model(options.model, options.device);
+    ov::AnyMap config;
+    if (options.threads > 0) config.insert(ov::inference_num_threads(options.threads));
+    ov::CompiledModel model = core.compile_model(options.model, options.device, config);
     ov::InferRequest request = model.create_infer_request();
 
     std::ofstream csv(options.output);
@@ -127,25 +142,31 @@ void run(const Options& options) {
     csv << "file,predicted,confidence,decision\n" << std::fixed << std::setprecision(6);
 
     std::vector<float> batch(options.batch * pixels);
+    std::size_t processed = 0;
     std::size_t reviewed = 0;
     double load_seconds = 0.0;
     double infer_seconds = 0.0;
+    std::vector<BatchTiming> timings;
     const Clock::time_point total_start = Clock::now();
 
-    for (std::size_t first = 0; first < paths.size(); first += options.batch) {
-        const std::size_t count = std::min(options.batch, paths.size() - first);
+    const bool timed_run = options.seconds > 0.0;
+    for (std::size_t first = 0;; first += options.batch) {
+        if (timed_run ? seconds_since(total_start) >= options.seconds : first >= paths.size()) break;
+        const std::size_t count = timed_run ? options.batch : std::min(options.batch, paths.size() - first);
 
         const Clock::time_point load_start = Clock::now();
         for (std::size_t i = 0; i < count; ++i) {
-            const cv::Mat wafer = load_wafer(paths[first + i], gate.image_size);
+            const cv::Mat wafer = load_wafer(paths[(first + i) % paths.size()], gate.image_size);
             std::copy_n(wafer.ptr<float>(), pixels, batch.begin() + static_cast<std::ptrdiff_t>(i * pixels));
         }
-        load_seconds += seconds_since(load_start);
+        const double load_time = seconds_since(load_start);
+        load_seconds += load_time;
 
         const Clock::time_point infer_start = Clock::now();
         request.set_input_tensor(ov::Tensor(ov::element::f32, ov::Shape{count, 1, size, size}, batch.data()));
         request.infer();
-        infer_seconds += seconds_since(infer_start);
+        const double infer_time = seconds_since(infer_start);
+        infer_seconds += infer_time;
 
         const float* probabilities = request.get_output_tensor().data<const float>();
         for (std::size_t i = 0; i < count; ++i) {
@@ -153,15 +174,26 @@ void run(const Options& options) {
             const std::size_t best = static_cast<std::size_t>(std::max_element(row, row + num_classes) - row);
             const bool automatic = row[best] >= gate.threshold;
             reviewed += automatic ? 0 : 1;
-            csv << paths[first + i] << ',' << gate.classes[best] << ',' << row[best] << ','
+            csv << paths[(first + i) % paths.size()] << ',' << gate.classes[best] << ',' << row[best] << ','
                 << (automatic ? "AUTO" : "REVIEW") << '\n';
+        }
+        processed += count;
+        timings.push_back({count, 1000.0 * load_time, 1000.0 * infer_time, 1000.0 * seconds_since(load_start)});
+    }
+
+    if (!options.timings.empty()) {
+        std::ofstream file(options.timings);
+        if (!file) throw std::runtime_error("Cannot write " + options.timings);
+        file << "wafers,load_ms,infer_ms,total_ms\n" << std::fixed << std::setprecision(6);
+        for (const BatchTiming& t : timings) {
+            file << t.wafers << ',' << t.load_ms << ',' << t.infer_ms << ',' << t.total_ms << '\n';
         }
     }
 
     const double total_seconds = seconds_since(total_start);
-    const double wafers = static_cast<double>(paths.size());
-    std::cout << "Wafers:      " << paths.size() << " (batch size " << options.batch << ", " << options.device << ")\n"
-              << "Automatic:   " << paths.size() - reviewed << "\n"
+    const double wafers = static_cast<double>(processed);
+    std::cout << "Wafers:      " << processed << " (batch size " << options.batch << ", " << options.device << ")\n"
+              << "Automatic:   " << processed - reviewed << "\n"
               << "To review:   " << reviewed << " (" << std::fixed << std::setprecision(1)
               << 100.0 * static_cast<double>(reviewed) / wafers << "%, threshold " << std::setprecision(3)
               << gate.threshold << ")\n"

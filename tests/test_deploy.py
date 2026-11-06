@@ -1,12 +1,32 @@
 """Tests for export, quantisation and the confidence gate (no dataset needed)."""
 
+import cv2
 import numpy as np
 import openvino as ov
 import torch
 
-from waferwise.deploy import calibration_indices, export_onnx, predict_openvino, quantize_int8, to_input
+from waferwise.deploy import (
+    PIXEL_FOR_CODE,
+    calibration_indices,
+    export_onnx,
+    load_wafer_png,
+    predict_openvino,
+    quantize_int8,
+    to_input,
+)
 from waferwise.gate import gate_report, pick_threshold
 from waferwise.models import WaferCNN
+
+
+def test_png_wafers_load_as_model_input(tmp_path):
+    wafer = np.array([[0, 1, 2, 1], [1, 2, 0, 0], [2, 2, 1, 0], [0, 1, 1, 2]], dtype=np.uint8)
+    path = tmp_path / "wafer.png"
+    assert cv2.imwrite(str(path), PIXEL_FOR_CODE[wafer])
+
+    loaded = load_wafer_png(path, size=4)
+
+    assert loaded.dtype == np.float32
+    np.testing.assert_array_equal(loaded, to_input(wafer[None])[0, 0])
 
 
 def test_to_input_scales_codes_and_adds_a_channel():

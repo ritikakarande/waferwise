@@ -23,6 +23,7 @@ onnxscript>=0.5,<1  # used by torch.onnx.export
 openvino>=2024.4,<2027
 nncf>=2.13,<4
 opencv-python>=4.10,<6
+psutil>=5.9,<8    # system details in the benchmark report
 
 # Data download and tests
 kaggle>=1.6,<3
