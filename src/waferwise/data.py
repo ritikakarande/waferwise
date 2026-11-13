@@ -15,7 +15,9 @@ from pathlib import Path
 import numpy as np
 import pandas as pd
 import torch
-from sklearn.model_selection import train_test_split
+from scipy.sparse import coo_matrix
+from scipy.sparse.csgraph import connected_components
+from sklearn.model_selection import StratifiedGroupKFold, train_test_split
 from torch.utils.data import Dataset
 
 from waferwise.utils import get_logger, repo_path
@@ -269,6 +271,39 @@ def make_splits(
     split_of_group[train], split_of_group[val], split_of_group[test] = 0, 1, 2
     split_of_sample = split_of_group[group_id.ravel()]
     return {name: np.flatnonzero(split_of_sample == k) for k, name in enumerate(("train", "val", "test"))}
+
+
+def connected_groups(*keys: np.ndarray) -> np.ndarray:
+    """Group id per sample, so that samples sharing a value of ANY key are in the same group.
+
+    With keys (lot, map hash), a lot stays together, and so does every copy of a duplicated map,
+    even when the copies come from different lots.
+    """
+    n = len(keys[0])
+    rows, cols = [], []
+    for key in keys:
+        _, first, inverse = np.unique(key, return_index=True, return_inverse=True)
+        rows.append(np.arange(n))
+        cols.append(first[inverse.ravel()])  # link every sample to the first sample with the same value
+    rows, cols = np.concatenate(rows), np.concatenate(cols)
+    graph = coo_matrix((np.ones(len(rows)), (rows, cols)), shape=(n, n))
+    return connected_components(graph, directed=False)[1]
+
+
+def make_group_splits(
+    y: np.ndarray, groups: np.ndarray, seed: int, val_fraction: float, test_fraction: float
+) -> dict[str, np.ndarray]:
+    """Train/val/test split that never puts one group in two splits, keeping class shares as close as it can.
+
+    Unlike make_splits, a group may mix classes (a lot holds wafers of many patterns), so whole
+    groups are assigned with StratifiedGroupKFold. Fractions are therefore only approximate.
+    """
+    test_folds = round(1 / test_fraction)
+    rest, test = next(StratifiedGroupKFold(test_folds, shuffle=True, random_state=seed).split(y, y, groups))
+    val_folds = round((1 - test_fraction) / val_fraction)
+    folds = StratifiedGroupKFold(val_folds, shuffle=True, random_state=seed)
+    train, val = next(folds.split(rest, y[rest], groups[rest]))
+    return {"train": np.sort(rest[train]), "val": np.sort(rest[val]), "test": np.sort(test)}
 
 
 def save_splits(splits: dict[str, np.ndarray], source_index: np.ndarray, path: str | Path) -> None:

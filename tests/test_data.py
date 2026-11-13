@@ -6,7 +6,16 @@ Tests marked ``needs_data`` run only after `scripts/prepare_data.py` has produce
 import numpy as np
 import pytest
 
-from waferwise.data import CLASSES, flatten_label, load_processed, load_splits, make_splits, resize_nearest
+from waferwise.data import (
+    CLASSES,
+    connected_groups,
+    flatten_label,
+    load_processed,
+    load_splits,
+    make_group_splits,
+    make_splits,
+    resize_nearest,
+)
 from waferwise.utils import load_config, repo_path
 
 CFG = load_config("configs/data.yaml")
@@ -52,6 +61,29 @@ def test_splits_do_not_overlap_and_cover_everything(data):
     train, val, test = set(s["train"]), set(s["val"]), set(s["test"])
     assert not train & val and not train & test and not val & test
     assert len(train) + len(val) + len(test) == len(data["y"])
+
+
+def test_connected_groups_join_samples_sharing_any_key():
+    lots = np.array(["a", "a", "b", "c", "d"])
+    maps = np.array([1, 2, 2, 3, 4])  # sample 2 copies sample 1's map, so lots a and b become one group
+
+    groups = connected_groups(lots, maps)
+
+    assert groups[0] == groups[1] == groups[2]
+    assert len({groups[0], groups[3], groups[4]}) == 3
+
+
+def test_make_group_splits_never_splits_a_group():
+    rng = np.random.default_rng(0)
+    groups = rng.integers(0, 300, size=3000)
+    y = rng.integers(0, 3, size=3000)
+
+    splits = make_group_splits(y, groups, seed=1, val_fraction=0.15, test_fraction=0.15)
+
+    assert sum(len(s) for s in splits.values()) == len(y)
+    assert len(np.unique(np.concatenate(list(splits.values())))) == len(y)
+    split_groups = [set(groups[s]) for s in splits.values()]
+    assert all(not (a & b) for i, a in enumerate(split_groups) for b in split_groups[i + 1:])
 
 
 def test_make_splits_keeps_groups_together():

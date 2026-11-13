@@ -12,7 +12,7 @@ Final model on the test set, which was never used for tuning or for choosing bet
 
 | Measure | Result |
 |---|---|
-| Macro-F1 | 0.872 (0.87 +/- 0.01 across seeds) |
+| Macro-F1 | 0.872 (0.87 +/- 0.01 across seeds); about 0.85 on lots never seen in training |
 | Macro recall | 0.897 |
 | Loss from INT8 | 0.0006 macro-F1 |
 | Time per wafer | 0.53 ms median, 0.88 ms p99, one CPU thread in C++ |
@@ -26,12 +26,14 @@ INT8 recall per class:
 |---|---|---|---|---|---|---|---|---|
 | 0.90 | 0.94 | 0.82 | 0.98 | 0.75 | 1.00 | 0.97 | 0.73 | 0.99 |
 
-Three findings shaped the final model:
+Four findings shaped the final model and how far to trust it:
 
 - **Label cleaning changed nothing measurable.** Dropping 563 suspect wafers left test macro-F1 at 0.869, against 0.871
   without cleaning.
 - **Synthetic wafers made things worse.** They lowered test macro-F1 to 0.82, because they blur the boundaries between
   classes. Simple oversampling kept it at 0.87.
+- **Shared lots flatter the score slightly.** On a split that keeps every lot out of training, macro-F1 is about
+  0.01 lower. See [Does it work on new lots?](#does-it-work-on-new-lots).
 - **Speed needed careful measurement.** My first benchmark showed C++ 3x faster than Python, which was false.
   See [Benchmarks](#benchmarks).
 
@@ -99,6 +101,8 @@ version. That reader only allows NumPy and a few safe built-ins to be loaded fro
   never cleaned, augmented or used for tuning.
 - WM-811K contains 3,250 groups of pixel-identical wafer maps. A plain random split put 704 test wafers' exact copies
   in the training set, so the split keeps every duplicate group inside a single split.
+- Wafers from the same lot can still sit in different splits. A second, lot-grouped split checks what that is worth:
+  see [Does it work on new lots?](#does-it-work-on-new-lots).
 
 ## Training and evaluation
 
@@ -263,6 +267,33 @@ Per-class test results for the final model:
 |---|---|---|---|---|---|---|---|---|---|
 | Recall | 0.90 | 0.94 | 0.83 | 0.97 | 0.74 | 1.00 | 0.97 | 0.73 | 0.99 |
 | Precision | 0.94 | 0.70 | 0.82 | 0.97 | 0.76 | 0.95 | 0.83 | 0.71 | 0.99 |
+
+## Does it work on new lots?
+
+```bash
+python scripts/make_lot_split.py                                         # -> splits/splits_lot_seed42.npz
+python scripts/train.py --config configs/lot_oversampled.yaml --seed 1   # and --seed 42
+python scripts/evaluate.py --run outputs/lot_oversampled_seed1 --split test
+```
+
+In the main split, 98.4% of test wafers come from a lot that also has wafers in training. For 67% of test defect
+wafers, a training wafer from the same lot has the same defect. Wafers in a lot share their process history, so this
+could make the test score look better than the model would do on a new lot.
+
+To measure it, I made a second split that keeps every lot, and every copy of a duplicated map, inside a single split.
+Class shares stay the same in every split (71/14/14), even for the 149 Near-full wafers. I then retrained the final
+recipe on it with the same two seeds:
+
+| Split, mean of 2 seeds | Val macro-F1 | Test macro-F1 | Test macro recall |
+|---|---|---|---|
+| Main: lots shared between splits | 0.873 | 0.865 +/- 0.011 | 0.896 |
+| Lot-grouped: test lots never seen in training | 0.862 | 0.852 +/- 0.004 | 0.883 |
+
+**Shared lots raise macro-F1 by about 0.01.** Validation and test both drop by that much, for both seeds. That is real
+but small, about the size of the gap between the two seeds. For a lot the model has never seen, 0.85 is the fair
+expectation, not 0.87. The largest per-class change is Loc: precision falls from 0.75 to 0.64, while its recall rises
+from 0.74 to 0.78. Classes with about 20 test wafers, such as Near-full, are too small to read. The INT8 model and the
+gate threshold were not re-calibrated on this split.
 
 ## Deployment
 
