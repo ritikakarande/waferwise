@@ -37,7 +37,8 @@ def main() -> None:
     axes.barh(positions, [latency[k] for k in keys], height=0.5, color=BAR)
     axes.set_yticks(positions, [LABELS[k] for k in keys], color=TEXT)
     for position, key in zip(positions, keys):
-        axes.text(latency[key] + 0.04, position, f"{latency[key]:.2f} ms", va="center", color=TEXT)
+        axes.text(latency[key] + 0.015 * max(latency.values()), position, f"{latency[key]:.2f} ms",
+                  va="center", color=TEXT)
     axes.set_title("Median time to classify one wafer, one CPU thread", loc="left", color=TEXT, fontsize=11)
     axes.tick_params(left=False, bottom=False, labelbottom=False)
     axes.spines[:].set_visible(False)

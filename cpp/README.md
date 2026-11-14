@@ -26,9 +26,20 @@ cmake -S cpp -B cpp\build -G Ninja -DCMAKE_BUILD_TYPE=Release ^
 cmake --build cpp\build
 ```
 
+## Build (Linux)
+
+```bash
+sudo apt-get install build-essential libopencv-dev
+pip install -r requirements.txt
+cmake -S cpp -B cpp/build -G Ninja -DCMAKE_BUILD_TYPE=Release \
+  -DOpenVINO_DIR="$(python -c 'from openvino.utils import get_cmake_path; print(get_cmake_path())')"
+cmake --build cpp/build
+cpp/build/waferwise_infer --model models/wafer_cnn_int8.xml --gate models/gate.json --input demo/wafers
+```
+
 ## Run
 
-The tool needs the OpenVINO and OpenCV DLLs on `PATH`:
+On Windows the tool needs the OpenVINO and OpenCV DLLs on `PATH`:
 
 ```bat
 set PATH=%CD%\.venv\Lib\site-packages\openvino\libs;%CD%\third_party\opencv\build\x64\vc16\bin;%PATH%
@@ -72,5 +83,6 @@ python scripts/export_wafer_images.py --split val --out outputs/deploy/wafers_va
 python scripts/check_cpp.py --csv outputs/deploy/cpp_val.csv --split val
 ```
 
-Built and tested with MSVC 19.44, OpenVINO 2026.4 and OpenCV 5.0.0. On all 25,955 val wafers, labels and gate decisions
-match Python exactly.
+Built and tested with MSVC 19.44 and OpenCV 5.0.0 on Windows, and with GCC 13.3 and OpenCV 4.6 on Ubuntu 24.04, both
+with OpenVINO 2026.4. On Windows, labels and gate decisions match Python exactly on all 25,955 val wafers. On Linux
+the same check runs on the 12 sample wafers (`tests/test_demo.py`).

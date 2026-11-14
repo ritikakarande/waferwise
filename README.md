@@ -1,5 +1,7 @@
 # waferwise
 
+[![tests](https://github.com/ritikakarande/waferwise/actions/workflows/tests.yml/badge.svg)](https://github.com/ritikakarande/waferwise/actions/workflows/tests.yml)
+
 Wafer-map defect classification on WM-811K, from noisy, imbalanced data to a model that runs in real time on an Intel CPU.
 
 > The data was dirty and imbalanced. I audited the labels, generated synthetic rare defects, and measured what actually helped: simple oversampling beat the synthetic data. Then I shipped a model that runs in real time on an Intel CPU and flags what it's unsure about.
@@ -15,8 +17,8 @@ Final model on the test set, which was never used for tuning or for choosing bet
 | Macro-F1 | 0.872 (0.87 +/- 0.01 across seeds); about 0.85 on lots never seen in training |
 | Macro recall | 0.897 |
 | Loss from INT8 | 0.0006 macro-F1 |
-| Time per wafer | 0.53 ms median, 0.88 ms p99, one CPU thread in C++ |
-| Speed-up over PyTorch | 5.2x per wafer, 3.8x from PNG to CSV |
+| Time per wafer | 0.15 ms median, 0.20 ms p99, one CPU thread in C++ (0.53 ms on battery) |
+| Speed-up over PyTorch | 4.7x per wafer, 3.7x from PNG to CSV |
 | Model size | 0.10 MB, 4x smaller than FP32 |
 | Confidence gate | reviews 7.4% of wafers, cuts wrong decisions from 683 to 130 and missed defects from 225 to 60 |
 
@@ -34,7 +36,8 @@ Four findings shaped the final model and how far to trust it:
   classes. Simple oversampling kept it at 0.87.
 - **Shared lots flatter the score slightly.** On a split that keeps every lot out of training, macro-F1 is about
   0.01 lower. See [Does it work on new lots?](#does-it-work-on-new-lots).
-- **Speed needed careful measurement.** My first benchmark showed C++ 3x faster than Python, which was false.
+- **Speed needed careful measurement.** My first benchmark showed C++ 3x faster than Python, which was false, and
+  the laptop's power state changes latency by more than any software choice did.
   See [Benchmarks](#benchmarks).
 
 ## Try it
@@ -72,6 +75,17 @@ python -m pip install --upgrade pip
 pip install -r requirements.txt
 pip install -e .
 ```
+
+**Optional GPU.** On Windows, `pip` installs the CPU build of PyTorch. With an NVIDIA GPU you can replace it with a
+CUDA build of the same version:
+
+```bash
+pip install --force-reinstall --no-deps "torch==2.15.0+cu132" "torchvision==0.29.2+cu132" --index-url https://download.pytorch.org/whl/cu132
+```
+
+Training then takes about 30 s per epoch on an RTX 5060 laptop GPU, against about 100 s on the CPU. Every result in
+this README was trained and evaluated on the CPU. Set `WAFERWISE_DEVICE=cpu` to reproduce them exactly: on the GPU
+the final model's predictions change for 4 of the 25,955 validation wafers.
 
 ## Getting the data
 
@@ -370,7 +384,7 @@ python scripts/plot_benchmark.py
 ```
 
 Every version runs the same job: read PNG wafers, run the model, apply the gate and write one CSV row per wafer. Each of
-the 20 setups ran for 20 seconds, 3 times, in a shuffled order.
+the 20 setups ran for 20 seconds, 5 times, in a shuffled order, on a plugged-in laptop.
 
 ![Median time to classify one wafer on one CPU thread](docs/figures/benchmark_latency.png)
 
@@ -378,43 +392,66 @@ One wafer at a time on one thread, with test accuracy for comparison:
 
 | Version | Test macro-F1 | Test macro recall | Weights | Median | p99 | Wafers/s, PNG to CSV |
 |---|---|---|---|---|---|---|
-| PyTorch FP32 | 0.872 | 0.897 | 0.39 MB | 2.78 ms | 5.37 ms | 276 |
-| OpenVINO FP32, Python | 0.872 | 0.897 | 0.39 MB | 1.02 ms | 1.41 ms | 624 |
-| OpenVINO FP32, C++ | 0.872 | 0.897 | 0.39 MB | 0.89 ms | 1.71 ms | 746 |
-| OpenVINO INT8, Python | 0.872 | 0.897 | 0.10 MB | 0.65 ms | 1.21 ms | 825 |
-| **OpenVINO INT8, C++** | 0.872 | 0.897 | 0.10 MB | **0.53 ms** | **0.88 ms** | **1,058** |
+| PyTorch FP32 | 0.872 | 0.897 | 0.39 MB | 0.69 ms | 0.93 ms | 1,136 |
+| OpenVINO FP32, Python | 0.872 | 0.897 | 0.39 MB | 0.28 ms | 0.38 ms | 2,435 |
+| OpenVINO FP32, C++ | 0.872 | 0.897 | 0.39 MB | 0.24 ms | 0.32 ms | 2,932 |
+| OpenVINO INT8, Python | 0.872 | 0.897 | 0.10 MB | 0.18 ms | 0.25 ms | 3,217 |
+| **OpenVINO INT8, C++** | 0.872 | 0.897 | 0.10 MB | **0.15 ms** | **0.20 ms** | **4,204** |
 
 OpenVINO INT8 in C++ at other settings. The default is 8 threads on this CPU:
 
 | Batch | Threads | Median per batch | Wafers/s, model only | Wafers/s, PNG to CSV |
 |---|---|---|---|---|
-| 1 | 1 | 0.53 ms | 1,807 | 1,058 |
-| 1 | default | 0.53 ms | 1,772 | 980 |
-| 256 | 1 | 95.7 ms | 2,639 | 1,549 |
-| 256 | default | 39.0 ms | 6,408 | 2,241 |
+| 1 | 1 | 0.15 ms | 6,821 | 4,204 |
+| 1 | default | 0.10 ms | 9,377 | 4,785 |
+| 256 | 1 | 26.8 ms | 9,456 | 5,490 |
+| 256 | default | 9.1 ms | 29,916 | 9,413 |
 
 What the numbers show:
 
-- **INT8 is the biggest step within OpenVINO.** In C++ it is 1.7x faster than FP32 per wafer and 2x faster at batch 256,
-  for 0.0006 macro-F1.
+- **INT8 is the biggest step within OpenVINO.** On one thread in C++ it is 1.6x faster than FP32 per wafer
+  and 2.1x faster at batch 256, for 0.0006 macro-F1.
 - **C++ does not run the model faster.** Both languages call the same OpenVINO runtime, and at batch 256 on one thread
-  they match: 2,639 and 2,623 wafers/s. C++ saves about 0.12 ms of call overhead per wafer, and from PNG to CSV it
-  handles 22-28% more wafers across the four settings.
-- **More threads do not help single wafers.** The model is too small to split up. PyTorch's default 16 threads make it
-  worse: median 4.0 ms and p99 74 ms, against 2.8 ms and 5.4 ms on one thread.
-- **Reading PNGs is now the bottleneck.** At batch 256 the model handles 6,408 wafers/s but the full job only 2,241,
-  because files are read one at a time. Loading them in parallel is the obvious next step.
+  they match: 9,456 and 9,358 wafers/s. C++ saves about 0.03 ms of call overhead
+  per wafer, and from PNG to CSV it handles 9-35% more wafers across the four settings.
+- **Threads help batches most.** At batch 256 the default 8 threads give 3.2x the single-thread
+  throughput. A single wafer gains much less, because the model is small.
+- **Reading PNGs is now the bottleneck.** At batch 256 the model handles 29,916 wafers/s but the full job only
+  9,413, because files are read one at a time. Loading them in parallel is the obvious next step.
 
-**How far to trust these numbers.** They come from one Intel Core i7-14650HX laptop on battery in its Silent power plan,
-so they describe a power-limited CPU. Plugged in it should be faster, but I have not measured that. With only 3 repeats,
-treat small differences with care. The batch 256 runs on default threads varied most: INT8 C++ ranged from 4,914 to
-6,626 wafers/s.
+**Power state changes the picture.** The same benchmark on battery, in the laptop's Silent power plan:
 
-**The false result.** My first benchmark ran a fixed number of wafers and showed C++ 3x faster than Python. Python also
-jumped between two speeds, 3x apart. A longer run explained it: in this power state the CPU runs fast for about 3 seconds
-under load and then slows down, by up to 3x, and C++ slowed down in the same way. C++ had only looked fast because its short runs ended
-inside that window. Now every run lasts a fixed time, and the first 5 seconds are left out, so all versions are measured
-in the same sustained state.
+| One wafer at a time | Plugged in: median | p99 | On battery: median | p99 |
+|---|---|---|---|---|
+| PyTorch FP32, 1 thread | 0.69 ms | 0.93 ms | 2.78 ms | 5.37 ms |
+| PyTorch FP32, default threads | 0.44 ms | 0.81 ms | 4.01 ms | 73.80 ms |
+| OpenVINO INT8 C++, 1 thread | 0.15 ms | 0.20 ms | 0.53 ms | 0.88 ms |
+| OpenVINO INT8 C++, default threads | 0.10 ms | 0.18 ms | 0.53 ms | 1.08 ms |
+
+The final model is 3.6x slower on battery, and one conclusion flips. On battery, extra threads did not help
+single wafers, and PyTorch's default 16 threads made it worse. Plugged in, extra threads help both. A latency claim means
+little without the power state it was measured in.
+
+**How far to trust these numbers.** They come from one Intel Core i7-14650HX laptop, plugged in, on the Windows
+Performance plan, with 5 repeats per setup. Treat small differences with care. The batch 256 runs on default threads
+varied most: INT8 C++ ranged from 29,511 to 39,252 wafers/s, so its gap to Python's
+34,369 there is noise.
+
+**The false result.** My first benchmark ran a fixed number of wafers, on battery, and showed C++ 3x faster than Python.
+Python also jumped between two speeds, 3x apart. A longer run explained it: on battery the CPU runs fast for about
+3 seconds under load and then slows down, by up to 3x, and C++ slowed down in the same way. C++ had only looked fast
+because its short runs ended inside that window. Now every run lasts a fixed time, and the first 5 seconds are left out,
+so all versions are measured in the same sustained state.
+
+## Tests
+
+```bash
+pytest
+```
+
+Tests that need the dataset skip themselves when it is missing. On every push, GitHub Actions
+(`.github/workflows/tests.yml`) runs the tests and the demo on Linux and Windows. It also builds the C++ CLI on Linux
+and checks that it gives the same labels, confidences and gate decisions as Python on the sample wafers.
 
 ## Repository layout
 
@@ -439,4 +476,5 @@ models/       INT8 model and gate settings, for the demo
 demo/         sample wafers for the demo
 docs/figures/ figures used in this README
 tests/        sanity tests
+.github/workflows/  tests and the Linux C++ build on every push
 ```

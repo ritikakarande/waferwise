@@ -1,5 +1,6 @@
 """Training loop with class-weighted loss and early stopping on validation macro-F1."""
 
+import os
 import time
 from pathlib import Path
 
@@ -22,7 +23,9 @@ log = get_logger(__name__)
 
 
 def get_device() -> torch.device:
-    return torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    """The GPU if PyTorch can use one, else the CPU. Set WAFERWISE_DEVICE=cpu to force the CPU."""
+    name = os.environ.get("WAFERWISE_DEVICE") or ("cuda" if torch.cuda.is_available() else "cpu")
+    return torch.device(name)
 
 
 def random_dihedral(x: torch.Tensor) -> torch.Tensor:

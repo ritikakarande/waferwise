@@ -5,7 +5,7 @@ seed: 42
 
 wafers: 25955               # the whole val split; runs cycle through them
 run_seconds: 20             # every run lasts this long, so fast and slow cases get the same conditions
-repeats: 3                  # every case runs this many times, in a shuffled order, so slow spells hit all cases alike
+repeats: 5                  # every case runs this many times, in a shuffled order, so slow spells hit all cases alike
 warmup_seconds: 5           # left out of all figures: the CPU boosts for its first seconds under load
 
 precisions: [fp32, int8]
