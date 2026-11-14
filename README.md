@@ -453,6 +453,15 @@ Tests that need the dataset skip themselves when it is missing. On every push, G
 (`.github/workflows/tests.yml`) runs the tests and the demo on Linux and Windows. It also builds the C++ CLI on Linux
 and checks that it gives the same labels, confidences and gate decisions as Python on the sample wafers.
 
+To rehearse the Linux part before pushing, with Docker running:
+
+```bash
+bash scripts/rehearse_ci.sh
+```
+
+It runs the same steps in a clean Ubuntu 24.04 container that sees only the files git would push, and takes about
+5 minutes.
+
 ## Repository layout
 
 ```
