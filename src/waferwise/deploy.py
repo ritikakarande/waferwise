@@ -9,6 +9,7 @@ from pathlib import Path
 import cv2
 import nncf
 import numpy as np
+import onnx
 import openvino as ov
 import torch
 from torch import nn
@@ -33,6 +34,22 @@ def export_onnx(model: nn.Module, path: Path, image_size: int = 64) -> None:
         external_data=False,
         verbose=False,  # its progress messages use emoji, which crash on a Windows console
     )
+    strip_onnx_metadata(path)
+
+
+def strip_onnx_metadata(path: Path) -> None:
+    """Remove the exporter's debug notes from an ONNX file; the graph and weights do not change.
+
+    torch.onnx stores a Python stack trace for every node, with full local file paths. They are
+    not needed to run the model and should not be published with it.
+    """
+    model = onnx.load(path)
+    for node in model.graph.node:
+        del node.metadata_props[:]
+        node.doc_string = ""
+    del model.graph.metadata_props[:]
+    del model.metadata_props[:]
+    onnx.save(model, path)
 
 
 def to_input(X: np.ndarray) -> np.ndarray:

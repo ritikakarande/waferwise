@@ -4,6 +4,9 @@
 
 Wafer-map defect classification on WM-811K, from noisy, imbalanced data to a model that runs in real time on an Intel CPU.
 
+**[Play the wafer game in your browser](https://ritikakarande.github.io/waferwise/)**: guess defect patterns against the model, draw your own, and
+set the confidence gate.
+
 > The data was dirty and imbalanced. I audited the labels, generated synthetic rare defects, and measured what actually helped: simple oversampling beat the synthetic data. Then I shipped a model that runs in real time on an Intel CPU and flags what it's unsure about.
 
 ![Animated demo: each wafer map is shown with the model's prediction, its confidence and the gate's decision](docs/figures/demo.gif)
@@ -55,6 +58,28 @@ python scripts/demo.py
 The samples are a seeded random draw from the validation split: one per class, plus three wafers the gate sends to
 review. That makes review far more common here (7 of 12) than in real use (7%). The draw also includes a real failure:
 an Edge-Ring wafer called "none" with 98% confidence, which passes the gate.
+
+## Play in your browser
+
+[The game](https://ritikakarande.github.io/waferwise/) runs the final model in the browser with ONNX Runtime Web, so nothing is sent to a server.
+It has three tabs:
+
+- **Play:** guess the defect pattern of a real wafer, then see the dataset label and the model's answer.
+- **Draw:** paint failing dies on a blank wafer and watch the model classify it after every stroke.
+- **Gate:** move the confidence threshold and see review rate, accuracy and errors change on the validation set.
+
+The page lives in `docs/` and is served by GitHub Pages. To rebuild its data and preview it locally:
+
+```bash
+python scripts/build_web.py                    # -> docs/assets/: model, 261 sample wafers, gate curve
+python -m http.server 8000 --directory docs    # then open http://localhost:8000
+```
+
+The browser runs the FP32 ONNX model, not the INT8 OpenVINO one, so `build_web.py` calibrates its gate again with
+the same rule on the validation split: threshold 0.874, which sends 7.35% of wafers to review at 99.5% accuracy.
+On all 261 sample wafers the browser gives the same labels as Python, with probabilities within 0.000001.
+The sample is 30 random validation wafers per class (all 21 for Near-full), so defects are far more common there
+than in real data.
 
 ## Pipeline
 
@@ -476,6 +501,7 @@ src/waferwise/
   deploy.py   ONNX and OpenVINO export, INT8 quantisation
   gate.py     confidence threshold and its report
   benchmark.py  the same job in PyTorch, Python and C++, and its statistics
+  web.py      data for the browser game: packed wafers and the gate curve
   utils.py    seeding, logging, paths
 scripts/      command-line entry points
 splits/       the fixed train/val/test split
@@ -483,6 +509,7 @@ audit/        suspect-label list from the label audit (defines the cleaned train
 cpp/          C++ inference (OpenVINO + OpenCV)
 models/       INT8 model and gate settings, for the demo
 demo/         sample wafers for the demo
+docs/         the browser game (GitHub Pages): index.html, js/, assets/
 docs/figures/ figures used in this README
 tests/        sanity tests
 .github/workflows/  tests and the Linux C++ build on every push
