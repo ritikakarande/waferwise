@@ -54,7 +54,9 @@ def test_openvino_export_matches_pytorch_and_int8_runs(tmp_path):
     with torch.no_grad():
         expected = torch.softmax(model(torch.from_numpy(to_input(X))), dim=1).numpy()
     probs = predict_openvino(fp32, X, batch_size=7)  # a batch size the export did not see
-    assert np.abs(probs - expected).max() < 1e-4
+    # Tight enough to catch a wrong export (class probabilities are about 0.1 here), loose enough for CPUs whose
+    # OpenVINO kernels round differently from PyTorch: a hosted Windows runner differed by 1.6e-4.
+    assert np.abs(probs - expected).max() < 1e-3
     assert np.allclose(probs.sum(axis=1), 1.0, atol=1e-4)
 
     int8 = quantize_int8(fp32, X)

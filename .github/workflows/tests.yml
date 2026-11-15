@@ -27,6 +27,8 @@ jobs:
           python -m pip install --upgrade pip
           pip install torch torchvision --index-url https://download.pytorch.org/whl/cpu
           pip install -r requirements.txt -e .
+      - name: Show the CPU and what OpenVINO can use on it
+        run: python -c "import openvino as ov; c = ov.Core(); print(c.get_property('CPU', 'FULL_DEVICE_NAME'), c.get_property('CPU', 'OPTIMIZATION_CAPABILITIES'))"
       # Tests that need the 2 GB dataset skip themselves; everything else runs.
       - name: Tests
         run: pytest -q

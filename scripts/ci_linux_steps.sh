@@ -16,6 +16,7 @@ pip install -q torch torchvision --index-url https://download.pytorch.org/whl/cp
 pip install -q -r requirements.txt -e .
 
 echo "=== 3/6 Tests and demo"
+python -c "import openvino as ov; c = ov.Core(); print(c.get_property('CPU', 'FULL_DEVICE_NAME'), c.get_property('CPU', 'OPTIMIZATION_CAPABILITIES'))"
 pytest -q
 python scripts/demo.py
 
